@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chat App</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        font-family: Arial, sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #f0f2f5;
+      }
+      .hide {
+        display: none !important;
+      }
+      #auth {
+        max-width: 340px;
+        margin: 60px auto;
+        background: #fff;
+        padding: 24px;
+        border-radius: 8px;
+      }
+      #auth input {
+        width: 100%;
+        padding: 10px;
+        margin: 6px 0;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      button {
+        padding: 10px 14px;
+        border: 0;
+        border-radius: 4px;
+        background: #0d6efd;
+        color: #fff;
+        cursor: pointer;
+      }
+      #auth button {
+        width: 100%;
+        margin-top: 6px;
+      }
+      .link {
+        color: #0d6efd;
+        cursor: pointer;
+        font-size: 14px;
+        margin-top: 10px;
+        display: block;
+      }
+      #msg {
+        color: #c00;
+        font-size: 14px;
+        min-height: 18px;
+      }
+      #app {
+        display: flex;
+        height: 100vh;
+      }
+      #side {
+        width: 260px;
+        background: #fff;
+        border-right: 1px solid #ddd;
+        display: flex;
+        flex-direction: column;
+      }
+      #side h3 {
+        margin: 0;
+        padding: 14px;
+        border-bottom: 1px solid #ddd;
+      }
+      #users {
+        flex: 1;
+        overflow: auto;
+      }
+      .user {
+        padding: 12px 14px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+      }
+      .user.active,
+      .user:hover {
+        background: #e7f1ff;
+      }
+      #side button {
+        margin: 10px;
+        background: #dc3545;
+      }
+      #main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      #head {
+        padding: 14px;
+        background: #fff;
+        border-bottom: 1px solid #ddd;
+        font-weight: bold;
+      }
+      #msgs {
+        flex: 1;
+        overflow: auto;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .m {
+        max-width: 60%;
+        padding: 8px 12px;
+        border-radius: 12px;
+        background: #fff;
+        align-self: flex-start;
+        word-break: break-word;
+      }
+      .m.me {
+        background: #0d6efd;
+        color: #fff;
+        align-self: flex-end;
+      }
+      #form {
+        display: flex;
+        gap: 8px;
+        padding: 10px;
+        background: #fff;
+        border-top: 1px solid #ddd;
+      }
+      #form input {
+        flex: 1;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="auth">
+      <h2 id="title">Login</h2>
+      <input id="firstName" placeholder="First name" class="hide" />
+      <input id="lastName" placeholder="Last name" class="hide" />
+      <input id="email" placeholder="Email" type="email" />
+      <input id="password" placeholder="Password" type="password" />
+      <input id="otp" placeholder="OTP" class="hide" />
+      <input
+        id="newPassword"
+        placeholder="New password"
+        type="password"
+        class="hide"
+      />
+      <div id="msg"></div>
+      <button id="submit">Login</button>
+      <span class="link" id="toSignup">Account nahi hai? Signup</span>
+      <span class="link hide" id="toLogin">Login par wapas</span>
+      <span class="link" id="toForgot">Password bhool gaye?</span>
+    </div>
+
+    <div id="app" class="hide">
+      <div id="side">
+        <h3 id="me"></h3>
+        <div id="users"></div>
+        <button id="logout">Logout</button>
+      </div>
+      <div id="main">
+        <div id="head">Chatt</div>
+        <div id="msgs"></div>
+        <form id="form" class="hide">
+          <input id="text" placeholder="Message likho..." autocomplete="off" />
+          <button>Send</button>
+        </form>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let mode = "login"; // login | signup | forgot | reset
+      let me = null,
+        currentChat = null,
+        socket = null;
+      const shown = new Set(); // duplicate messages se bachne ke liye
+
+      async function api(url, method = "GET", body) {
+        const res = await fetch("/api/v1" + url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const data = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, data };
+      }
+
+      // ---------- AUTH SCREEN ----------
+      function setMode(m) {
+        mode = m;
+        $("msg").textContent = "";
+        const show = (id, v) => $(id).classList.toggle("hide", !v);
+        show("firstName", m === "signup");
+        show("lastName", m === "signup");
+        show("password", m === "login" || m === "signup");
+        show("otp", m === "reset");
+        show("newPassword", m === "reset");
+        show("toSignup", m === "login");
+        show("toForgot", m === "login");
+        show("toLogin", m !== "login");
+        $("title").textContent = {
+          login: "Login",
+          signup: "Signup",
+          forgot: "Forgot Password",
+          reset: "Reset Password",
+        }[m];
+        $("submit").textContent = {
+          login: "Login",
+          signup: "Signup",
+          forgot: "OTP bhejo",
+          reset: "Password badlo",
+        }[m];
+      }
+      $("toSignup").onclick = () => setMode("signup");
+      $("toLogin").onclick = () => setMode("login");
+      $("toForgot").onclick = () => setMode("forgot");
+
+      $("submit").onclick = async () => {
+        const email = $("email").value,
+          password = $("password").value;
+        let r;
+        if (mode === "login")
+          r = await api("/login", "POST", { email, password });
+        if (mode === "signup")
+          r = await api("/signup", "POST", {
+            firstName: $("firstName").value,
+            lastName: $("lastName").value,
+            email,
+            password,
+          });
+        if (mode === "forgot")
+          r = await api("/forget-password", "POST", { email });
+        if (mode === "reset")
+          r = await api("/reset-password", "POST", {
+            email,
+            otp: $("otp").value,
+            newPassword: $("newPassword").value,
+          });
+
+        $("msg").textContent = r.data.message || "";
+        if (!r.ok) return;
+        if (mode === "login") return startApp(r.data.user);
+        if (mode === "signup" || mode === "reset") return setMode("login");
+        if (mode === "forgot") return setMode("reset");
+      };
+
+      // ---------- CHAT ----------
+      function startApp(user) {
+        me = user;
+        $("auth").classList.add("hide");
+        $("app").classList.remove("hide");
+        $("me").textContent = user.firstName + " " + user.lastName;
+        loadUsers();
+
+        socket = io();
+        socket.on("connect_error", (e) =>
+          console.log("Socket error:", e.message),
+        );
+        socket.on("message", (m) => {
+          const other = m.from._id === me._id ? m.to._id : m.from._id;
+          if (other === currentChat) addMsg(m);
+        });
+      }
+
+      function showAuth() {
+        if (socket) socket.disconnect();
+        me = null;
+        currentChat = null;
+        $("app").classList.add("hide");
+        $("auth").classList.remove("hide");
+        setMode("login");
+      }
+
+      async function loadUsers() {
+        const r = await api("/users");
+        $("users").innerHTML = "";
+        (r.data.users || []).forEach((u) => {
+          const d = document.createElement("div");
+          d.className = "user";
+          d.textContent = u.firstName + " " + u.lastName;
+          d.onclick = () => openChat(u, d);
+          $("users").appendChild(d);
+        });
+      }
+
+      async function openChat(u, el) {
+        document
+          .querySelectorAll(".user")
+          .forEach((x) => x.classList.remove("active"));
+        el.classList.add("active");
+        currentChat = u._id;
+        $("head").textContent = u.firstName + " " + u.lastName;
+        $("form").classList.remove("hide");
+        $("msgs").innerHTML = "";
+        shown.clear();
+        const r = await api("/conversation/" + u._id);
+        (r.data.conversations || []).forEach(addMsg);
+      }
+
+      function addMsg(m) {
+        if (shown.has(m._id)) return;
+        shown.add(m._id);
+        const d = document.createElement("div");
+        d.className = "m" + (m.from._id === me._id ? " me" : "");
+        d.textContent = m.message;
+        $("msgs").appendChild(d);
+        $("msgs").scrollTop = $("msgs").scrollHeight;
+      }
+
+      $("form").onsubmit = async (e) => {
+        e.preventDefault();
+        const message = $("text").value.trim();
+        if (!message || !currentChat) return;
+        $("text").value = "";
+        const r = await api("/chat/" + currentChat, "POST", { message });
+        if (r.ok) addMsg(r.data.chat);
+        else alert(r.data.message || "Message nahi gaya");
+      };
+
+      $("logout").onclick = async () => {
+        await api("/logout", "POST");
+        showAuth();
+      };
+
+      // ---------- PAGE LOAD: token check ----------
+      setMode("login");
+      (async () => {
+        const r = await api("/me");
+        if (r.ok) startApp(r.data.user);
+        else showAuth();
+      })();
+    </script>
+  </body>
+</html>
